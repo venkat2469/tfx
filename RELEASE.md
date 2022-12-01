@@ -41,8 +41,6 @@
    This placeholder can be used to generate beam_pipeline_args
    dynamically.
 
-*  Update the TFMA Colab to utilize the DataFrame API to render metrics.
-
 ## Breaking Changes
 
 *   N/A

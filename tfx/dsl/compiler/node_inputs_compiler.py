@@ -183,6 +183,11 @@ def _compile_input_spec(
     # pipeline is external (i.e. not a parent or sibling pipeline) thus
     # pipeline run cannot be synced.
     channel = cast(channel_types.PipelineOutputChannel, channel)
+    _validate_min_count(
+        input_key=input_key,
+        min_count=min_count,
+        channel=channel,
+        tfx_node=tfx_node)
     _compile_channel_pb(
         artifact_type=channel.type,
         pipeline_name=channel.pipeline.id,
@@ -225,6 +230,11 @@ def _compile_input_spec(
 
   elif isinstance(channel, channel_types.Channel):
     channel = cast(channel_types.Channel, channel)
+    _validate_min_count(
+        input_key=input_key,
+        min_count=min_count,
+        channel=channel,
+        tfx_node=tfx_node)
     _compile_channel_pb(
         artifact_type=channel.type,
         pipeline_name=pipeline_ctx.pipeline_info.pipeline_name,
@@ -344,6 +354,40 @@ def _compile_inputs_for_dynamic_properties(
         hidden=False,
         min_count=1,
         result=result)
+
+
+def _validate_min_count(
+    input_key: str,
+    min_count: int,
+    channel: channel_types.Channel,
+    tfx_node: base_node.BaseNode,
+) -> None:
+  """Validates artifact min count against node execution options.
+
+  Args:
+    input_key: Artifact input key to be displayed in error messages.
+    min_count: Minimum artifact count to be set in InputSpec.
+    channel: Channel to be compiled.
+    tfx_node: Pipeline or node using the artifact as an input.
+
+  Raises:
+    ValueError: if min_count is invalid.
+  """
+  if channel.additional_custom_properties.get(
+      'success_optional_enabled') and min_count > 0:
+    raise ValueError(
+        f'Artifact under input key {input_key} for node {tfx_node.id} needs to '
+        'be declared optional, because it is produced by a node with '
+        '`success_optional=True` in its node execution options.')
+  consumer_options = getattr(tfx_node, '_node_execution_options', None)
+  if consumer_options and consumer_options.get('trigger_strategy') == (
+      pipeline_pb2.NodeExecutionOptions.ALL_UPSTREAM_NODES_COMPLETED
+      ) and min_count > 0:
+    raise ValueError(
+        f'Node {tfx_node.id} has '
+        '`trigger_strategy=ALL_UPSTREAM_NODES_COMPLETED` in its node execution '
+        f'options. Artifact under {input_key} declared by this node needs '
+        'to be optional')
 
 
 def compile_node_inputs(

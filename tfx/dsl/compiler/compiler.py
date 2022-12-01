@@ -231,30 +231,21 @@ class Compiler:
 
     # Step 8: Node execution options
     node.execution_options.caching_options.enable_cache = enable_cache
-    # TODO(b/211890056): Support non default triggering strategies and node
-    # success optionality with optional artifacts.
     node_execution_options = getattr(tfx_node, "_node_execution_options", None)
     if node_execution_options:
-      if node_execution_options.get("trigger_strategy"):
-        if not pipeline_ctx.is_sync_mode:
-          raise ValueError("Node level triggering strategies are only used in "
-                           "SYNC pipelines.")
-        if tfx_node.inputs:
-          raise NotImplementedError("Non default triggering strategies with "
-                                    "data dependency are not yet supported.")
-        node.execution_options.strategy = node_execution_options.get(
-            "trigger_strategy")
-      if node_execution_options.get("success_optional", None):
-        if not pipeline_ctx.is_sync_mode:
-          raise ValueError("Node level success optionality is only used in "
-                           "SYNC pipelines.")
-        if tfx_node.outputs:
-          raise NotImplementedError("Node level success optionality with "
-                                    "data dependency is not yet supported.")
-        node.execution_options.node_success_optional = node_execution_options.get(
-            "success_optional")
+      if (node_execution_options.get("trigger_strategy") or
+          node_execution_options.get("success_optional")
+         ) and not pipeline_ctx.is_sync_mode:
+        raise ValueError("Node level triggering strategies and success "
+                         "optionality are only used in SYNC pipelines.")
+      node.execution_options.strategy = node_execution_options.get(
+          "trigger_strategy",
+          pipeline_pb2.NodeExecutionOptions.TRIGGER_STRATEGY_UNSPECIFIED)
+      node.execution_options.node_success_optional = node_execution_options.get(
+          "success_optional", False)
       node.execution_options.max_execution_retries = (
           node_execution_options.get("max_execution_retries", 0))
+
     # Step 9: Per-node platform config
     if isinstance(tfx_node, base_component.BaseComponent):
       tfx_component = cast(base_component.BaseComponent, tfx_node)
