@@ -216,18 +216,18 @@ class NodeState(json_utils.Jsonable):
     return cls(**dict_data)
 
   def latest_predicate_time_s(
-      self, predicate: Callable[[str], bool]) -> Optional[int]:
-    """Returns the latest time the node state satisfies the given predicate.
+      self, predicate: Callable[[StateRecord], bool]) -> Optional[int]:
+    """Returns the latest time the StateRecord satisfies the given predicate.
 
     Args:
       predicate: Predicate that takes the state string.
 
     Returns:
-      The latest time (in the state history) the node state satisfies the given
+      The latest time (in the state history) the StateRecord satisfies the given
       predicate, or None if the predicate is never satisfied.
     """
     for s in reversed(self.state_history):
-      if predicate(s.state):
+      if predicate(s):
         return int(s.update_time)
     return None
 
@@ -238,7 +238,8 @@ class NodeState(json_utils.Jsonable):
       The latest time (in the state history) the node entered a RUNNING
       state, or None if the node never entered a RUNNING state.
     """
-    return self.latest_predicate_time_s(is_node_state_running)
+    return self.latest_predicate_time_s(
+        lambda s: is_node_state_running(s.state))
 
 
 def is_node_state_success(state: str) -> bool:
