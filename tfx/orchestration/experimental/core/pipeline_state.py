@@ -90,6 +90,7 @@ _EXECUTION_STATE_TO_RUN_STATE_MAP = {
 @dataclasses.dataclass
 class StateRecord(json_utils.Jsonable):
   state: str
+  backfill_token: str
   status_code: Optional[int]
   update_time: float
   # TODO(b/242083811) Some status_msg have already been written into MLMD.
@@ -132,6 +133,7 @@ class NodeState(json_utils.Jsonable):
           SKIPPED_PARTIAL_RUN, PAUSING, PAUSED, FAILED
       ]),
       on_setattr=attr.setters.validate)
+  backfill_token: str = ''
   status_code: Optional[int] = None
   status_msg: str = ''
   last_updated_time: float = attr.ib(factory=lambda: time.time())  # pylint:disable=unnecessary-lambda
@@ -146,11 +148,13 @@ class NodeState(json_utils.Jsonable):
 
   def update(self,
              state: str,
-             status: Optional[status_lib.Status] = None) -> None:
+             status: Optional[status_lib.Status] = None,
+             backfill_token: str = '') -> None:
     if self.state != state:
       self.state_history.append(
           StateRecord(
               state=self.state,
+              backfill_token=backfill_token,
               status_code=self.status_code,
               update_time=self.last_updated_time))
       if len(self.state_history) > _MAX_STATE_HISTORY_LEN:
@@ -158,6 +162,7 @@ class NodeState(json_utils.Jsonable):
       self.last_updated_time = time.time()
 
     self.state = state
+    self.backfill_token = backfill_token
     self.status_code = status.code if status is not None else None
     self.status_msg = status.message if status is not None else ''
 

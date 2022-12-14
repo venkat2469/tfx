@@ -154,12 +154,14 @@ class _Generator:
           task_lib.exec_node_task_id_from_node(self._pipeline, node)):
         continue
 
-      result.extend(self._generate_tasks_for_node(self._mlmd_handle, node))
+      result.extend(
+          self._generate_tasks_for_node(self._mlmd_handle, node,
+                                        node_state.backfill_token))
     return result
 
-  def _generate_tasks_for_node(
-      self, metadata_handler: metadata.Metadata,
-      node: node_proto_view.NodeProtoView) -> List[task_lib.Task]:
+  def _generate_tasks_for_node(self, metadata_handler: metadata.Metadata,
+                               node: node_proto_view.NodeProtoView,
+                               backfill_token: str) -> List[task_lib.Task]:
     """Generates a node execution task.
 
     If a node execution is not feasible, `None` is returned.
@@ -167,6 +169,7 @@ class _Generator:
     Args:
       metadata_handler: A handler to access MLMD db.
       node: The pipeline node for which to generate a task.
+      backfill_token: Backfill token, if applicable.
 
     Returns:
       Returns a `Task` or `None` if task generation is deemed infeasible.
@@ -182,6 +185,16 @@ class _Generator:
     oldest_active_execution = task_gen_utils.get_oldest_active_execution(
         executions)
     if oldest_active_execution:
+      if backfill_token:
+        if oldest_active_execution.properties[
+            'backfill'].string_value != backfill_token:
+          logging.exception(
+              'Node %s is in backfill mode, but there are active executions '
+              'that are not for backfill token %s. Oldest active execution '
+              'was: %s', node.node_info.id, backfill_token,
+              oldest_active_execution)
+          return []
+
       with mlmd_state.mlmd_execution_atomic_op(
           mlmd_handle=self._mlmd_handle,
           execution_id=oldest_active_execution.id,
@@ -190,7 +203,9 @@ class _Generator:
         execution.last_known_state = metadata_store_pb2.Execution.RUNNING
       result.append(
           task_lib.UpdateNodeStateTask(
-              node_uid=node_uid, state=pstate.NodeState.RUNNING))
+              node_uid=node_uid,
+              state=pstate.NodeState.RUNNING,
+              backfill_token=backfill_token))
       result.append(
           task_gen_utils.generate_task_from_execution(self._mlmd_handle,
                                                       self._pipeline, node,
@@ -231,6 +246,12 @@ class _Generator:
     successful_executions = [
         e for e in executions if execution_lib.is_execution_successful(e)
     ]
+    if backfill_token:
+      successful_executions = [
+          e for e in executions
+          if e.properties['backfill'].string_value == backfill_token
+      ]
+
     execution_identifiers = []
     for execution in successful_executions:
       execution_identifier = {}
@@ -256,10 +277,34 @@ class _Generator:
         unprocessed_inputs.append(input_and_param)
 
     if not unprocessed_inputs:
-      result.append(
-          task_lib.UpdateNodeStateTask(
-              node_uid=node_uid, state=pstate.NodeState.STARTED))
+      if backfill_token:
+        logging.info(
+            'Node %s run in backfill mode, could not find any inputs to '
+            'process, so backfill is complete', node.node_info.id)
+        result.append(
+            task_lib.UpdateNodeStateTask(
+                node_uid=node_uid,
+                state=pstate.NodeState.COMPLETE,
+                backfill_token=backfill_token))
+      else:
+        result.append(
+            task_lib.UpdateNodeStateTask(
+                node_uid=node_uid, state=pstate.NodeState.STARTED))
       return result
+
+    if backfill_token:
+      if len(unprocessed_inputs) != 1:
+        logging.exception(
+            'Node %s run in backfill mode, but it resolved %d inputs, instead '
+            'of exactly one input Currently backfill nodes must resolve '
+            'exactly one input', node.node_info.id, len(unprocessed_inputs))
+        result.append(
+            task_lib.UpdateNodeStateTask(
+                node_uid=node_uid,
+                state=pstate.NodeState.FAILED,
+                backfill_token=backfill_token))
+        return result
+      unprocessed_inputs[0].exec_properties['backfill'] = backfill_token
 
     # Don't need to register all executions in one transaction. If the
     # orchestrator is interrupted in the middle, in the next iteration, the
@@ -295,7 +340,9 @@ class _Generator:
     outputs_utils.make_output_dirs(output_artifacts)
     result.append(
         task_lib.UpdateNodeStateTask(
-            node_uid=node_uid, state=pstate.NodeState.RUNNING))
+            node_uid=node_uid,
+            state=pstate.NodeState.RUNNING,
+            backfill_token=backfill_token))
     result.append(
         task_lib.ExecNodeTask(
             node_uid=node_uid,
